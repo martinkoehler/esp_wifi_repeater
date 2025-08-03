@@ -18,6 +18,11 @@
 
 #define MAGIC_NUMBER    0x6e2dc510
 
+//KOM
+#define SYSTEM_OUTPUT_INFO	2
+#define SYSTEM_OUTPUT_CMD	1
+#define SYSTEM_OUTPUT_NONE	0
+
 typedef enum {
         AUTOMESH_OFF = 0, AUTOMESH_LEARNING, AUTOMESH_OPERATIONAL
 } automeshmode;
@@ -156,6 +161,7 @@ typedef struct {
         gpio_trigger_type gpio_trigger_type[17];
         uint8_t gpio_trigger_pin[17];
 #endif
+	bool mqtt_slip; // KOM allow access to local mqtt server via serial
 } sysconfig_t, *sysconfig_p;
 
 int config_load(sysconfig_p config);

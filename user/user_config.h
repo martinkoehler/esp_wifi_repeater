@@ -43,7 +43,7 @@
 //
 // Define this to 1 to support the "scan" command for AP search
 //
-#define		ALLOW_SCANNING 1
+#define		ALLOW_SCANNING 0
 
 //
 // Define this to 1 to support the "ping" command for IP connectivity check
@@ -54,7 +54,7 @@
 // Define this to 1 to support the "sleep" command for power management and deep sleep
 // Requires a connection of GPIO16 and RST (probably not available on ESP01 modules)
 //
-#define		ALLOW_SLEEP 1
+#define		ALLOW_SLEEP 0
 
 //
 // Define this to 1 to support a daily traffic limit
@@ -69,7 +69,7 @@
 //
 // Define this to 1 to support a loopback device (127.0.0.1)
 //
-#define		HAVE_LOOPBACK 1
+#define		HAVE_LOOPBACK 1 
 
 //
 // Define this to 1 if you want to have access to the config console via TCP.
@@ -92,12 +92,12 @@
 //
 // Define this to 1 if you want to have OTA (Over the air) updates
 //
-#define		OTAUPDATE 1
+#define		OTAUPDATE 0
 
 //
 // Define this to 1 if you want to have QoS for the SoftAP.
 //
-#define		TOKENBUCKET 1
+#define		TOKENBUCKET 0
 // Burst size (token bucket size) in seconds of average bitrate
 #define		MAX_TOKEN_RATIO 4
 
@@ -106,7 +106,7 @@
 // Packets are mirrored in pcap format to the given port.
 // CAUTION: this might be a privacy issue!!!
 //
-#define		REMOTE_MONITORING 1
+#define		REMOTE_MONITORING 0
 
 #define		MONITOR_BUFFER_SIZE 0x3c00
 
@@ -140,7 +140,7 @@
 
 // Define this to 1 support WPA2 PEAP authentication (experimental)
 //
-#define		WPA2_PEAP 1
+#define		WPA2_PEAP 0
 
 //
 // Define this to 1 to support an ENC28J60 Ethernet interface
@@ -152,7 +152,7 @@
 // Define this to 1 to support ENC28J60 DHCP server
 // Experimental feature - might not yet be stable
 //
-#define         DCHPSERVER_ENC28J60 1
+#define         DCHPSERVER_ENC28J60 0
 
 //
 // Define this ESP GPIO, if you have the HW-RESET pin of the ENC28J60 connected to it
@@ -163,7 +163,7 @@
 //
 // Define this to 1 if you want to be able to control GPIO pins from the command line
 //
-#define		GPIO_CMDS 1
+#define		GPIO_CMDS 0
 
 // Internal
 

@@ -28,7 +28,7 @@ SDK_BASE	?= $(BUILD_AREA)/esp-open-sdk/sdk
 
 # # esptool.py path and port
 ESPTOOL		?= $(XTENSA_TOOLS_ROOT)/esptool.py
-ESPPORT		?= /dev/ttyUSB0
+ESPPORT		?= /dev/ttyUSB3
 ESPTOOLBAUD	?= 115200
 #ESPTOOLBAUD	?= 460800 # will work with modern hardware
 ESPTOOLOPTS	= -ff 40m -fm dio -fs 32m
@@ -44,7 +44,7 @@ EXTRA_INCDIR    = include $(BUILD_AREA)/esp-open-sdk/esp-open-lwip/include
 #LIB_MODULES	= mqtt
 
 # libraries used in this project, mainly provided by the SDK
-LIBS		= c gcc hal pp phy net80211 lwip_open_napt wpa wpa2 main crypto
+LIBS		= c gcc hal pp phy net80211 lwip_open_napt wpa wpa2 main crypto mqtt
 
 # compiler flags using during compilation of source files
 CFLAGS		= -Os -g -O2 -Wpointer-arith -Wundef -Werror -Wl,-EL -fno-inline-functions -nostdlib -mlongcalls -mtext-section-literals  -D__ets__ -DICACHE_FLASH -DLWIP_OPEN_SRC -DUSE_OPTIMIZE_PRINTF
