@@ -120,6 +120,78 @@ uint8_t uplink_bssid[6];
 static netif_input_fn orig_input_ap, orig_input_sta;
 static netif_linkoutput_fn orig_output_ap, orig_output_sta;
 
+// KOM
+
+static struct espconn *mqtt_slip_conn = NULL;
+static esp_tcp *mqtt_slip_tcp = NULL;
+static bool mqtt_slip_active = false;
+
+void ICACHE_FLASH_ATTR mqtt_slip_connect_cb(void *arg) {
+    os_printf("MQTT SLIP TCP connected\n");
+    // Register callbacks for receive/send/disconnect as needed
+}
+
+void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *data, unsigned short length) {
+    // Forward received bytes to console output logic (user_procTask)
+    struct espconn *pespconn = (struct espconn *)arg;
+    int index;
+    uint8_t ch;
+
+    for (index = 0; index < length; index++)
+    {
+        ch = *(data + index);
+        ringbuf_memcpy_into(console_rx_buffer, &ch, 1);
+
+        // If a complete commandline is received, then signal the main
+        // task that command is available for processing
+        if (ch == '\n')
+            system_os_post(0, SIG_CONSOLE_RX, (ETSParam)arg);
+    }
+
+    *(data + length) = 0;
+}
+
+
+
+void ICACHE_FLASH_ATTR mqtt_slip_discon_cb(void *arg) {
+    os_printf("MQTT SLIP TCP disconnected\n");
+    mqtt_slip_active = false;
+}
+
+void ICACHE_FLASH_ATTR mqtt_slip_start() {
+    if (mqtt_slip_active) return; // Already started
+
+    mqtt_slip_conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
+    mqtt_slip_tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
+    mqtt_slip_conn->type = ESPCONN_TCP;
+    mqtt_slip_conn->state = ESPCONN_NONE;
+    mqtt_slip_conn->proto.tcp = mqtt_slip_tcp;
+
+    // localhost = 127.0.0.1
+    mqtt_slip_tcp->remote_port = 1833;
+    mqtt_slip_tcp->local_port = espconn_port(); // random local port
+    mqtt_slip_tcp->remote_ip[0] = 127;
+    mqtt_slip_tcp->remote_ip[1] = 0;
+    mqtt_slip_tcp->remote_ip[2] = 0;
+    mqtt_slip_tcp->remote_ip[3] = 1;
+
+    espconn_regist_connectcb(mqtt_slip_conn, mqtt_slip_connect_cb);
+    espconn_regist_recvcb(mqtt_slip_conn, mqtt_slip_recv_cb);
+    espconn_regist_disconcb(mqtt_slip_conn, mqtt_slip_discon_cb);
+
+    espconn_connect(mqtt_slip_conn);
+    mqtt_slip_active = true;
+}
+
+void ICACHE_FLASH_ATTR mqtt_slip_stop() {
+    if (!mqtt_slip_active) return;
+    espconn_disconnect(mqtt_slip_conn);
+    os_free(mqtt_slip_conn->proto.tcp);
+    os_free(mqtt_slip_conn);
+    mqtt_slip_conn = NULL;
+    mqtt_slip_active = false;
+}
+
 #if HAVE_ENC28J60
 struct netif *eth_netif;
 #endif
@@ -2784,9 +2856,15 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
             if (strcmp(tokens[1], "mqtt_slip") == 0)
             {
                 if (strcmp(tokens[2], "true") == 0 )
+		{
 		    config.mqtt_slip = mqtt_slip = true;
+		    mqtt_slip_start();
+		}
 		else
+		{
 		    config.mqtt_slip = mqtt_slip = false;
+		    mqtt_slip_stop();
+		}
                 os_sprintf(response, "mqtt_slip mode setting %s\r\n",
                            mqtt_slip ? "true" : "false");
                 goto command_handled;
@@ -3811,10 +3889,12 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
     case SIG_CONSOLE_TX_RAW:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
-	if (pespconn == 0 && mqtt_slip) { // do not use the serial console
+	// KOM Think we need to send to the console
+	/*if (pespconn == 0 && mqtt_slip) { // do not use the serial console
 		ringbuf_reset(console_tx_buffer);
 		break; 
 	};
+	*/
         console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
 
         if (pespconn != 0 && remote_console_disconnect)
@@ -3826,7 +3906,10 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
     case SIG_CONSOLE_RX:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
-	if (pespconn == 0 && mqtt_slip) { // do not use the serial console
+	if (pespconn == 0 && mqtt_slip_active && mqtt_slip_conn) { // send to the mqtt_slip server
+		int length;
+		length =  ringbuf_bytes_used(console_rx_buffer);
+		espconn_send(mqtt_slip_conn,console_rx_buffer,length);
 		ringbuf_reset(console_rx_buffer);
 		break;
 	};
@@ -4361,8 +4444,12 @@ void ICACHE_FLASH_ATTR user_init()
         blob_zero(0, sizeof(struct portmap_table) * config.max_portmap);
     }
     // KOM 
-    if (config.mqtt_slip)
+    if (config.mqtt_slip) 
+    {
         mqtt_slip = config.mqtt_slip;
+	if (mqtt_slip)
+		mqtt_slip_start();
+    }
     if (config.tcp_timeout != 0)
         ip_napt_set_tcp_timeout(config.tcp_timeout);
     if (config.udp_timeout != 0)
