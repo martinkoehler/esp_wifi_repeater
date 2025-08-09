@@ -145,7 +145,7 @@ void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *data, unsigned short l
         // If a complete commandline is received, then signal the main
         // task that command is available for processing
         if (ch == '\n')
-            system_os_post(0, SIG_CONSOLE_RX, (ETSParam)arg);
+            system_os_post(0, SIG_CONSOLE_TX_MQTT_SLIP, (ETSParam)arg);
     }
 
     *(data + length) = 0;
@@ -156,6 +156,11 @@ void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *data, unsigned short l
 void ICACHE_FLASH_ATTR mqtt_slip_discon_cb(void *arg) {
     os_printf("MQTT SLIP TCP disconnected\n");
     mqtt_slip_active = false;
+    if (mqtt_slip)
+    { // We still want the server, so reconnect
+	os_printf("Reconnecting MQTT SLIP\n");
+        mqtt_slip_start();
+    };
 }
 
 void ICACHE_FLASH_ATTR mqtt_slip_start() {
@@ -168,7 +173,8 @@ void ICACHE_FLASH_ATTR mqtt_slip_start() {
     mqtt_slip_conn->proto.tcp = mqtt_slip_tcp;
 
     // localhost = 127.0.0.1
-    mqtt_slip_tcp->remote_port = 1833;
+    mqtt_slip_tcp->remote_port = 80; // For debugging connect to Webserver
+    //mqtt_slip_tcp->remote_port = 1833;
     mqtt_slip_tcp->local_port = espconn_port(); // random local port
     mqtt_slip_tcp->remote_ip[0] = 127;
     mqtt_slip_tcp->remote_ip[1] = 0;
@@ -3885,16 +3891,27 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
         // Anything else to do here, when the repeater has received its IP?
         break;
 
+    case SIG_CONSOLE_TX_MQTT_SLIP:
+    {
+        struct espconn *pespconn = (struct espconn *)events->par;
+        console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
+        if (pespconn != 0 && remote_console_disconnect)
+            espconn_disconnect(pespconn);
+        remote_console_disconnect = 0;
+    }
+    break;
+
     case SIG_CONSOLE_TX:
     case SIG_CONSOLE_TX_RAW:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
-	// KOM Think we need to send to the console
-	/*if (pespconn == 0 && mqtt_slip) { // do not use the serial console
+	// KOM Suppress output if mqtt_slip and console
+	if (pespconn == 0 && mqtt_slip) { // do not use the serial console
 		ringbuf_reset(console_tx_buffer);
 		break; 
 	};
-	*/
+	
+	// In case we have a Remote console, send response
         console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
 
         if (pespconn != 0 && remote_console_disconnect)
