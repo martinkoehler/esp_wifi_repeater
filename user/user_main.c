@@ -1233,29 +1233,35 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
     if (pespconn == 0 && mqtt_slip) { // This is mqtt_slip data
         // Check for end of HTTP request (e.g., \r\n\r\n)
         if (bytes_count >= 4) {
-            if (cmd_line[buffer_len - 4] == '\r' &&
-                cmd_line[buffer_len - 3] == '\n' &&
-                cmd_line[buffer_len - 2] == '\r' &&
-                cmd_line[buffer_len - 1] == '\n') {
+            if (cmd_line[bytes_count - 4] == '\r' &&
+                cmd_line[bytes_count - 3] == '\n' &&
+                cmd_line[bytes_count - 2] == '\r' &&
+                cmd_line[bytes_count - 1] == '\n') {
 
-                // Send the request to the server
-                struct ip_addr ip;
-                os_inet_aton("127.0.0.1", &ip);
-                mqtt_slip_conn.type = ESPCONN_TCP;
-                mqtt_slip_conn.proto.tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
-                mqtt_slip_conn.proto.tcp->remote_port = 80;
-                mqtt_slip_conn.proto.tcp->remote_ip = ip;
-                mqtt_slip_conn.recevcb = mqtt_slip_recv_cb;
-                mqtt_slip_conn.sentcb = mqtt_slip_sent_cb;
+		mqtt_slip_conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
+		mqtt_slip_tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
+		mqtt_slip_conn->type = ESPCONN_TCP;
+		mqtt_slip_conn->state = ESPCONN_NONE;
+		mqtt_slip_conn->proto.tcp = mqtt_slip_tcp;
 
-                if (espconn_connect(&mqtt_slip_conn) == ESPCONN_OK) {
-                    espconn_sent(&mqtt_slip_conn, cmd_line, bytes_count);
+		// localhost = 127.0.0.1
+		mqtt_slip_tcp->remote_port = 80; // For debugging connect to Webserver
+		//mqtt_slip_tcp->remote_port = 1833;
+		mqtt_slip_tcp->local_port = espconn_port(); // random local port
+		mqtt_slip_tcp->remote_ip[0] = 127;
+		mqtt_slip_tcp->remote_ip[1] = 0;
+		mqtt_slip_tcp->remote_ip[2] = 0;
+		mqtt_slip_tcp->remote_ip[3] = 1;
+		espconn_regist_connectcb(mqtt_slip_conn, mqtt_slip_connect_cb);
+		espconn_regist_recvcb(mqtt_slip_conn, mqtt_slip_recv_cb);
+                if (espconn_connect(mqtt_slip_conn) == ESPCONN_OK) {
+                    espconn_sent(mqtt_slip_conn, cmd_line, bytes_count);
                 }
             }
             ringbuf_reset(console_tx_buffer);
         }
 		return; 
-	};
+    };
 
     nTokens = parse_str_into_tokens(cmd_line, tokens, MAX_CMD_TOKENS);
 
@@ -4504,8 +4510,8 @@ void ICACHE_FLASH_ATTR user_init()
     {
         mqtt_slip = config.mqtt_slip;
 	/*if (mqtt_slip)
-		mqtt_slip_start();
-    }*/
+		mqtt_slip_start(); */
+    }
     if (config.tcp_timeout != 0)
         ip_napt_set_tcp_timeout(config.tcp_timeout);
     if (config.udp_timeout != 0)
