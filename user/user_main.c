@@ -126,12 +126,25 @@ static struct espconn *mqtt_slip_conn = NULL;
 static esp_tcp *mqtt_slip_tcp = NULL;
 static bool mqtt_slip_active = false;
 
+
+// mqtt_slip Sent Callback
+void ICACHE_FLASH_ATTR mqtt_slip_sent_cb(void *arg) {
+    // Data sent, now wait for response
+}
+
+// mqtt_slip Receive Callback
+void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *data, unsigned short len) {
+    struct espconn *conn = (struct espconn *)arg;
+    uart_write_buffer(0, data, len);
+}
+
+
 void ICACHE_FLASH_ATTR mqtt_slip_connect_cb(void *arg) {
     os_printf("MQTT SLIP TCP connected\n");
     // Register callbacks for receive/send/disconnect as needed
 }
 
-void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *data, unsigned short length) {
+/*void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *data, unsigned short length) {
     // Forward received bytes to console output logic (user_procTask)
     struct espconn *pespconn = (struct espconn *)arg;
     int index;
@@ -197,7 +210,7 @@ void ICACHE_FLASH_ATTR mqtt_slip_stop() {
     mqtt_slip_conn = NULL;
     mqtt_slip_active = false;
 }
-
+*/
 #if HAVE_ENC28J60
 struct netif *eth_netif;
 #endif
@@ -1217,6 +1230,32 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 
     cmd_line[bytes_count] = 0;
     response[0] = 0;
+    if (pespconn == 0 && mqtt_slip) { // This is mqtt_slip data
+        // Check for end of HTTP request (e.g., \r\n\r\n)
+        if (bytes_count >= 4) {
+            if (cmd_line[buffer_len - 4] == '\r' &&
+                cmd_line[buffer_len - 3] == '\n' &&
+                cmd_line[buffer_len - 2] == '\r' &&
+                cmd_line[buffer_len - 1] == '\n') {
+
+                // Send the request to the server
+                struct ip_addr ip;
+                os_inet_aton("127.0.0.1", &ip);
+                mqtt_slip_conn.type = ESPCONN_TCP;
+                mqtt_slip_conn.proto.tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
+                mqtt_slip_conn.proto.tcp->remote_port = 80;
+                mqtt_slip_conn.proto.tcp->remote_ip = ip;
+                mqtt_slip_conn.recevcb = mqtt_slip_recv_cb;
+                mqtt_slip_conn.sentcb = mqtt_slip_sent_cb;
+
+                if (espconn_connect(&mqtt_slip_conn) == ESPCONN_OK) {
+                    espconn_sent(&mqtt_slip_conn, cmd_line, bytes_count);
+                }
+            }
+            ringbuf_reset(console_tx_buffer);
+        }
+		return; 
+	};
 
     nTokens = parse_str_into_tokens(cmd_line, tokens, MAX_CMD_TOKENS);
 
@@ -2864,12 +2903,12 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
                 if (strcmp(tokens[2], "true") == 0 )
 		{
 		    config.mqtt_slip = mqtt_slip = true;
-		    mqtt_slip_start();
+		    //mqtt_slip_start();
 		}
 		else
 		{
 		    config.mqtt_slip = mqtt_slip = false;
-		    mqtt_slip_stop();
+		    //mqtt_slip_stop();
 		}
                 os_sprintf(response, "mqtt_slip mode setting %s\r\n",
                            mqtt_slip ? "true" : "false");
@@ -3891,7 +3930,7 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
         // Anything else to do here, when the repeater has received its IP?
         break;
 
-    case SIG_CONSOLE_TX_MQTT_SLIP:
+    /*case SIG_CONSOLE_TX_MQTT_SLIP:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
         console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
@@ -3900,17 +3939,17 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
         remote_console_disconnect = 0;
     }
     break;
-
+    */
     case SIG_CONSOLE_TX:
     case SIG_CONSOLE_TX_RAW:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
 	// KOM Suppress output if mqtt_slip and console
-	if (pespconn == 0 && mqtt_slip) { // do not use the serial console
+	/*if (pespconn == 0 && mqtt_slip) { // do not use the serial console
 		ringbuf_reset(console_tx_buffer);
 		break; 
 	};
-	
+	*/
 	// In case we have a Remote console, send response
         console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
 
@@ -3923,13 +3962,13 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
     case SIG_CONSOLE_RX:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
-	if (pespconn == 0 && mqtt_slip_active && mqtt_slip_conn) { // send to the mqtt_slip server
+	/*if (pespconn == 0 && mqtt_slip_active && mqtt_slip_conn) { // send to the mqtt_slip server
 		int length;
 		length =  ringbuf_bytes_used(console_rx_buffer);
 		espconn_send(mqtt_slip_conn,console_rx_buffer,length);
 		ringbuf_reset(console_rx_buffer);
 		break;
-	};
+	}; /*
         console_handle_command(pespconn);
     }
     break;
@@ -4464,9 +4503,9 @@ void ICACHE_FLASH_ATTR user_init()
     if (config.mqtt_slip) 
     {
         mqtt_slip = config.mqtt_slip;
-	if (mqtt_slip)
+	/*if (mqtt_slip)
 		mqtt_slip_start();
-    }
+    }*/
     if (config.tcp_timeout != 0)
         ip_napt_set_tcp_timeout(config.tcp_timeout);
     if (config.udp_timeout != 0)
