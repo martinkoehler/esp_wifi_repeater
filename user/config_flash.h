@@ -161,7 +161,9 @@ typedef struct {
         gpio_trigger_type gpio_trigger_type[17];
         uint8_t gpio_trigger_pin[17];
 #endif
-	bool mqtt_slip; // KOM allow access to local mqtt server via serial
+#if MQTT_SLIP
+		bool mqtt_slip; 
+#endif
 } sysconfig_t, *sysconfig_p;
 
 int config_load(sysconfig_p config);
