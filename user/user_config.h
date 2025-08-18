@@ -15,6 +15,14 @@
 #define		MAX_CLIENTS 8
 #define		MAX_DHCP 8
 
+// MQTT_SLIP
+// Define this to 1 if you want enable a local mqtt server which can be accessed via the 
+// serial connection. You need the TCP Bridge on the host system
+#define		MQTT_SLIP 1
+
+
+
+
 //
 // Docker SDK comes with a user_rf_cal_sector_set() in libmain.a.
 // Define this to 1 if you use an official SDK (and need the user_rf_cal_sector_set() here)

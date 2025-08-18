@@ -14,8 +14,6 @@
 #include "lwip/app/espconn.h"
 #include "lwip/app/espconn_tcp.h"
 
-#include "mqtt/mqtt_server.h"
-
 #if OTAUPDATE
 #include "rboot-api.h"
 #include "rboot-ota.h"
@@ -57,6 +55,11 @@
 #if MQTT_CLIENT
 #include "mqtt.h"
 #endif
+
+#if MQTT_SLIP
+#include "mqtt/mqtt_server.h"
+#endif
+
 
 #define os_sprintf_flash(str, fmt, ...)                                    \
     do                                                                     \
@@ -102,9 +105,6 @@ sysconfig_t config;
 
 static ringbuf_t console_rx_buffer, console_tx_buffer;
 
-//KOM
-bool mqtt_slip; // If set, the serial is used for ip connection to local mqtt server
-
 static ip_addr_t my_ip;
 static ip_addr_t dns_ip;
 bool connected;
@@ -119,30 +119,6 @@ uint8_t uplink_bssid[6];
 
 static netif_input_fn orig_input_ap, orig_input_sta;
 static netif_linkoutput_fn orig_output_ap, orig_output_sta;
-
-// KOM
-
-static struct espconn *mqtt_slip_conn = NULL;
-static esp_tcp *mqtt_slip_tcp = NULL;
-static bool mqtt_slip_active = false;
-
-
-// mqtt_slip Sent Callback
-void ICACHE_FLASH_ATTR mqtt_slip_sent_cb(void *arg) {
-    // Data sent, now wait for response
-}
-
-// mqtt_slip Receive Callback
-void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *data, unsigned short len) {
-    struct espconn *conn = (struct espconn *)arg;
-    UART_Send(0, data, len);
-}
-
-
-void ICACHE_FLASH_ATTR mqtt_slip_connect_cb(void *arg) {
-    os_printf("MQTT SLIP TCP connected\n");
-    // Register callbacks for receive/send/disconnect as needed
-}
 
 #if HAVE_ENC28J60
 struct netif *eth_netif;
@@ -165,6 +141,37 @@ void ICACHE_FLASH_ATTR mac_2_buff(char *buf, uint8_t mac[6])
     os_sprintf(buf, "%02x:%02x:%02x:%02x:%02x:%02x",
                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
+
+#if MQTT_SLIP
+// SLIP to TCP Forwarder
+#define MQTT_SLIP_FWD_HOST   "127.0.0.1"  // localhost
+#define MQTT_SLIP_FWD_PORT   80 // later 1833
+#define MQTT_SLIP_MQTT_SERVER_PORT 1883 // Port of the local MQTT Server
+
+bool mqtt_slip; // If set, the serial is used for ip connection to local mqtt server
+static struct espconn *mqtt_slip_conn = NULL;
+static esp_tcp *mqtt_slip_tcp = NULL;
+static bool mqtt_slip_active = false;
+
+
+void ICACHE_FLASH_ATTR configure_mqtt_slip(bool flag)
+{
+    os_printf("mqtt_slip: %s", flag?"true":"false");
+    if (flag) // mqtt_slip is enabled, suppress all console output
+    {
+        system_set_os_print(0);
+        // disable UART echo
+        UART_Echo(0);
+        // See REMOTE_CONFIG
+    } else
+    { // restore console output
+        system_set_os_print(1);
+        UART_Echo(1)
+    }
+}
+#endif
+
+
 
 #if MQTT_CLIENT
 
@@ -1132,14 +1139,14 @@ int i;
 
     if (os_strlen(inp) != 17) return false;
     for (i=0; i<17; i++) {
-	if (inp[i] == ':') continue;
-	inp[i] = toupper(inp[i]);
+        if (inp[i] == ':') continue;
+        inp[i] = toupper(inp[i]);
         inp[i] = inp[i] <= '9'? inp[i]-'0' : (inp[i]-'A')+10;
-	if (inp[i] >= 16) return false;
+        if (inp[i] >= 16) return false;
     }
 
     for (i=0; i<17; i+=3) {
-	*mac++ = inp[i]*16+inp[i+1];
+        *mac++ = inp[i]*16+inp[i+1];
     }
     return true;
 }
@@ -1163,38 +1170,6 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 
     cmd_line[bytes_count] = 0;
     response[0] = 0;
-    if (pespconn == 0 && mqtt_slip) { // This is mqtt_slip data
-        // Check for end of HTTP request (e.g., \r\n\r\n)
-        if (bytes_count >= 4) {
-            if (cmd_line[bytes_count - 4] == '\r' &&
-                cmd_line[bytes_count - 3] == '\n' &&
-                cmd_line[bytes_count - 2] == '\r' &&
-                cmd_line[bytes_count - 1] == '\n') {
-
-		mqtt_slip_conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
-		mqtt_slip_tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
-		mqtt_slip_conn->type = ESPCONN_TCP;
-		mqtt_slip_conn->state = ESPCONN_NONE;
-		mqtt_slip_conn->proto.tcp = mqtt_slip_tcp;
-
-		// localhost = 127.0.0.1
-		mqtt_slip_tcp->remote_port = 80; // For debugging connect to Webserver
-		//mqtt_slip_tcp->remote_port = 1833;
-		mqtt_slip_tcp->local_port = espconn_port(); // random local port
-		mqtt_slip_tcp->remote_ip[0] = 127;
-		mqtt_slip_tcp->remote_ip[1] = 0;
-		mqtt_slip_tcp->remote_ip[2] = 0;
-		mqtt_slip_tcp->remote_ip[3] = 1;
-		espconn_regist_connectcb(mqtt_slip_conn, mqtt_slip_connect_cb);
-		espconn_regist_recvcb(mqtt_slip_conn, mqtt_slip_recv_cb);
-                if (espconn_connect(mqtt_slip_conn) == ESPCONN_OK) {
-                    espconn_sent(mqtt_slip_conn, cmd_line, bytes_count);
-                }
-            }
-            ringbuf_reset(console_tx_buffer);
-        }
-		return; 
-    };
 
     nTokens = parse_str_into_tokens(cmd_line, tokens, MAX_CMD_TOKENS);
 
@@ -1225,6 +1200,11 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 #endif
 #if MQTT_CLIENT
                    "|mqtt"
+#else
+                   ""
+#endif
+#if MQTT_SLIP
+                   "|mqtt_slip"
 #else
                    ""
 #endif
@@ -1303,14 +1283,16 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
         os_sprintf_flash(response, "set phy_mode [1|2|3]\r\n");
         to_console(response);
 #endif
-        os_sprintf_flash(response, "set mqtt_slip [true|false]\r\n");
-        to_console(response);
 #if ALLOW_SLEEP
         os_sprintf_flash(response, "sleep <secs>\r\nset [vmin|vmin_sleep] <val>\r\n");
         to_console(response);
 #endif
 #if MQTT_CLIENT
         os_sprintf_flash(response, "set [mqtt_host|mqtt_port|mqtt_user|mqtt_password|mqtt_id|mqtt_qos|mqtt_prefix|mqtt_command_topic|mqtt_interval] <val>\r\n");
+        to_console(response);
+#endif
+#if MQTT_SLIP
+        os_sprintf_flash(response, "set mqtt_slip [true|false]\r\n");
         to_console(response);
 #endif
 #if GPIO_CMDS
@@ -1484,6 +1466,10 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
             os_sprintf(response, "MQTT: %s\r\n", mqtt_enabled ? "enabled" : "disabled");
             to_console(response);
 #endif
+#if MQTT_SLIP
+            os_sprintf_flash(response, "MQTT_SLIP %s\r\n", config.mqtt_slip);
+            to_console(response);
+#endif
 #if ALLOW_SLEEP
             if (config.Vmin != 0)
             {
@@ -1551,9 +1537,6 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 #endif
             os_sprintf(response, "Free mem: %d\r\n", system_get_free_heap_size());
             to_console(response);
-
-	    os_sprintf(response, "mqtt_slip: %s\r\n", (mqtt_slip ? "true":"false"));
-	    to_console(response);
 
             if (connected)
             {
@@ -1717,6 +1700,15 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
             to_console(response);
             os_sprintf(response, "MQTT id: %s\r\nMQTT prefix: %s\r\nMQTT QoS: %d\r\nMQTT command topic: %s\r\nMQTT gpio_out topic: %s\r\nMQTT interval: %d s\r\nMQTT mask: %04x\r\n",
                        config.mqtt_id, config.mqtt_prefix, config.mqtt_qos, config.mqtt_command_topic, config.mqtt_gpio_out_topic, config.mqtt_interval, config.mqtt_topic_mask);
+            to_console(response);
+            goto command_handled_2;
+        }
+#endif
+#if MQTT_SLIP
+
+        if (nTokens == 2 && strcmp(tokens[1], "mqtt_slip") == 0)
+        {
+            os_sprintf(response, "MQTT_SLIP %s\r\n", mqtt_slip ? "true" : "false");
             to_console(response);
             goto command_handled_2;
         }
@@ -2136,9 +2128,9 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
                     break;
             }
 
-            /*	for (i = 0; i<MAX_DHCP && (p = dhcps_get_mapping(i)); i++) {
-	  os_memcpy(&config.dhcps_p[i], p, sizeof(struct dhcps_pool));
-	}
+            /*  for (i = 0; i<MAX_DHCP && (p = dhcps_get_mapping(i)); i++) {
+          os_memcpy(&config.dhcps_p[i], p, sizeof(struct dhcps_pool));
+        }
 */
             config.dhcps_entries = i;
             config_save(&config);
@@ -2664,6 +2656,24 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
                 goto command_handled;
             }
 #endif
+#if MQTT_SLIP
+            if (strcmp(tokens[1], "mqtt_slip") == 0)
+            {
+                if (strcmp(tokens[2], "true") == 0 )
+              {
+                  config.mqtt_slip = mqtt_slip = true;
+                  //mqtt_slip_start();
+              }
+              else
+              {
+                  config.mqtt_slip = mqtt_slip = false;
+                  //mqtt_slip_stop();
+              }
+                os_sprintf(response, "mqtt_slip mode setting %s\r\n",
+                           mqtt_slip ? "true" : "false");
+                goto command_handled;
+            }
+#endif
 #if REMOTE_CONFIG
             if (strcmp(tokens[1], "config_port") == 0)
             {
@@ -2835,22 +2845,6 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
                 }
                 easygpio_pinMode(config.hw_reset, EASYGPIO_PULLUP, EASYGPIO_INPUT);
                 os_sprintf(response, "\r\nHW factory reset set to GPIO %d\r\n", config.hw_reset);
-                goto command_handled;
-            }
-            if (strcmp(tokens[1], "mqtt_slip") == 0)
-            {
-                if (strcmp(tokens[2], "true") == 0 )
-		{
-		    config.mqtt_slip = mqtt_slip = true;
-		    //mqtt_slip_start();
-		}
-		else
-		{
-		    config.mqtt_slip = mqtt_slip = false;
-		    //mqtt_slip_stop();
-		}
-                os_sprintf(response, "mqtt_slip mode setting %s\r\n",
-                           mqtt_slip ? "true" : "false");
                 goto command_handled;
             }
 #if PHY_MODE
@@ -3873,7 +3867,6 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
     case SIG_CONSOLE_TX_RAW:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
-	// In case we have a Remote console, send response
         console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
 
         if (pespconn != 0 && remote_console_disconnect)
@@ -4360,11 +4353,11 @@ void ICACHE_FLASH_ATTR user_init()
     t_old = 0;
     os_memset(uplink_bssid, 0, sizeof(uplink_bssid));
 
-
 #if DAILY_LIMIT
     Bytes_per_day = 0;
     last_date = 0;
 #endif
+
 #if TOKENBUCKET
     t_old_tb = 0;
     token_bucket_ds = token_bucket_us = 0;
@@ -4375,31 +4368,10 @@ void ICACHE_FLASH_ATTR user_init()
 
     gpio_init();
     init_long_systime();
-/*
-    // KOM
-    // all system output to /dev/null
-    void void_write_char(char c) {
-       // Do nothing
-    }
-*/
-    //system_set_os_print(0);
-    //disable UART echo
-    //UART_Echo(0);
-    // See REMOTE_CONFIG
-
-    //os_install_putc1(void_write_char);
-    mqtt_slip = false; // 
 
     UART_init_console(BIT_RATE_115200, 0, console_rx_buffer, console_tx_buffer);
 
     os_printf("\r\n\r\nWiFi Repeater %s starting\r\nrunning rom %d\r\n", ESP_REPEATER_VERSION, rboot_get_current_rom());
-    // KOM
-    os_printf("Starting MQTT Server\r\n");
-    MQTT_server_cleanupClientCons();
-    MQTT_server_start(1883,30,30);
-    MQTT_server_cleanupClientCons();
-    os_printf("...done \r\n");
-
 
     // Load config
     uint8_t config_state = config_load(&config);
@@ -4415,11 +4387,7 @@ void ICACHE_FLASH_ATTR user_init()
         // clear portmap table
         blob_zero(0, sizeof(struct portmap_table) * config.max_portmap);
     }
-    // KOM 
-    if (config.mqtt_slip) 
-    {
-        mqtt_slip = config.mqtt_slip;
-    }
+
     if (config.tcp_timeout != 0)
         ip_napt_set_tcp_timeout(config.tcp_timeout);
     if (config.udp_timeout != 0)
@@ -4634,7 +4602,7 @@ void ICACHE_FLASH_ATTR user_init()
     {
         MQTT_InitConnection(&mqttClient, config.mqtt_host, config.mqtt_port, 0);
 
-        //	MQTT_InitClient(&mqttClient, MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS, MQTT_KEEPALIVE, MQTT_CLEAN_SESSION);
+        //      MQTT_InitClient(&mqttClient, MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS, MQTT_KEEPALIVE, MQTT_CLEAN_SESSION);
         if (os_strcmp(config.mqtt_user, "none") == 0)
         {
             MQTT_InitClient(&mqttClient, config.mqtt_id, 0, 0, 120, 1);
@@ -4652,7 +4620,18 @@ void ICACHE_FLASH_ATTR user_init()
         MQTT_OnData(&mqttClient, mqttDataCb);
     }
 #endif /* MQTT_CLIENT */
-
+#if MQTT_SLIP
+    if (config.mqtt_slip)
+    {
+        mqtt_slip = config.mqtt_slip;
+        configure_mqtt_slip(mqtt_slip);
+    };
+    os_printf("Starting MQTT Server\r\n");
+    MQTT_server_cleanupClientCons();
+    MQTT_server_start(MQTT_SLIP_MQTT_SERVER,30,30);
+    MQTT_server_cleanupClientCons();
+    os_printf("...done \r\n");
+#endif
     remote_console_disconnect = 0;
 
     system_init_done_cb(to_scan);
@@ -4695,6 +4674,7 @@ void ICACHE_FLASH_ATTR user_init()
     // Start the timer
     os_timer_setfn(&ptimer, timer_func, 0);
     os_timer_arm(&ptimer, 500, 0);
+
     //Start task
     system_os_task(user_procTask, user_procTaskPrio, user_procTaskQueue, user_procTaskQueueLen);
 }
