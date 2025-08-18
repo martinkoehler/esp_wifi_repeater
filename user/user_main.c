@@ -1467,7 +1467,7 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
             to_console(response);
 #endif
 #if MQTT_SLIP
-            os_sprintf_flash(response, "MQTT_SLIP %s\r\n", config.mqtt_slip);
+            os_sprintf(response, "MQTT_SLIP %s\r\n", mqtt_slip ? "true" : "false");
             to_console(response);
 #endif
 #if ALLOW_SLEEP
@@ -4623,8 +4623,11 @@ void ICACHE_FLASH_ATTR user_init()
     if (config.mqtt_slip)
     {
         mqtt_slip = config.mqtt_slip;
-        configure_mqtt_slip(mqtt_slip);
+    } else 
+    {
+        mqtt_slip = false;
     };
+    configure_mqtt_slip(mqtt_slip);
     os_printf("Starting MQTT Server\r\n");
     MQTT_server_cleanupClientCons();
     MQTT_server_start(MQTT_SLIP_MQTT_SERVER_PORT,30,30);

@@ -138,6 +138,10 @@ uint32_t reg0, reg1, reg3;
     config->mqtt_topic_mask		= 0xffff;
 #endif
 
+#if MQTT_SLIP
+    config->mqtt_slip                   = false;
+#endif
+
 #if HAVE_ENC28J60
     mac[0] ^= 0x04;
     os_memcpy(config->ETH_MAC_address, mac, 6);
