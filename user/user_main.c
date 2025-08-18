@@ -161,13 +161,13 @@ void ICACHE_FLASH_ATTR configure_mqtt_slip(bool flag)
     {
         system_set_os_print(0);
         // disable UART echo
-        UART_Echo(0);
+        //UART_Echo(0);
         // See REMOTE_CONFIG
     } else
     { // restore console output
         system_set_os_print(1);
-        UART_Echo(1)
-    }
+        //UART_Echo(1);
+    };
 }
 #endif
 
@@ -2662,15 +2662,14 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
                 if (strcmp(tokens[2], "true") == 0 )
               {
                   config.mqtt_slip = mqtt_slip = true;
-                  //mqtt_slip_start();
               }
               else
               {
                   config.mqtt_slip = mqtt_slip = false;
-                  //mqtt_slip_stop();
               }
                 os_sprintf(response, "mqtt_slip mode setting %s\r\n",
                            mqtt_slip ? "true" : "false");
+                configure_mqtt_slip(mqtt_slip);
                 goto command_handled;
             }
 #endif
@@ -4628,7 +4627,7 @@ void ICACHE_FLASH_ATTR user_init()
     };
     os_printf("Starting MQTT Server\r\n");
     MQTT_server_cleanupClientCons();
-    MQTT_server_start(MQTT_SLIP_MQTT_SERVER,30,30);
+    MQTT_server_start(MQTT_SLIP_MQTT_SERVER_PORT,30,30);
     MQTT_server_cleanupClientCons();
     os_printf("...done \r\n");
 #endif
