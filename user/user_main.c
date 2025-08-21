@@ -152,7 +152,34 @@ bool mqtt_slip; // If set, the serial is used for ip connection to local mqtt se
 static struct espconn *mqtt_slip_conn = NULL;
 static esp_tcp *mqtt_slip_tcp = NULL;
 static bool mqtt_slip_active = false;
+char *mqtt_slip_request = NULL;
 
+// Callback when TCP connects
+void ICACHE_FLASH_ATTR mqtt_slip_http_connected_cb(void *arg) {
+    struct espconn *mqtt_slip_conn = (struct espconn *)arg;
+    espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
+    os_free(mqtt_slip_request);
+    mqtt_slip_request = NULL;
+}
+
+// Callback on HTTP response
+void ICACHE_FLASH_ATTR mqtt_slip_http_recv_cb(void *arg, char *pdata, unsigned short len) {
+    // Forward HTTP body back to serial
+    // Simplest: write raw pdata bytes
+    ringbuf_memcpy_into(console_tx_buffer, pdata, len);
+    ringbuf_memcpy_into(console_rx_buffer, "\n", 1);
+    // signal the main task that command is available for processing
+    system_os_post(0, SIG_CONSOLE_RX, 0);
+}
+
+// Callback on disconnection: free memory
+void ICACHE_FLASH_ATTR mqtt_slip_http_discon_cb(void *arg) {
+    struct espconn *mqtt_slip_conn = (struct espconn *)arg;
+    os_free(mqtt_slip_conn->proto.tcp);
+    os_free(mqtt_slip_conn);
+    mqtt_slip_conn = NULL;
+    mqtt_slip_active = false;
+}
 
 void ICACHE_FLASH_ATTR configure_mqtt_slip(bool flag)
 {
@@ -1158,7 +1185,6 @@ static char INVALID_ARG[] = "Invalid argument\r\n";
 void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 {
 #define MAX_CMD_TOKENS 9
-
     char cmd_line[MAX_CON_CMD_SIZE + 1];
     char response[256];
     char *tokens[MAX_CMD_TOKENS];
@@ -1170,6 +1196,46 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 
     cmd_line[bytes_count] = 0;
     response[0] = 0;
+
+#if MQTT_SLIP
+    if (mqtt_slip)
+    {
+	    char *mqtt_slip_request = (char *)os_malloc(bytes_count); 
+	    os_memcpy(mqtt_slip_request,cmd_line,bytes_count);
+	    if (! mqtt_slip_active) 
+	    {
+	    	    // Use espconn or lwm2m TCP client to send to localhost:80
+		    mqtt_slip_conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
+		    mqtt_slip_tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
+		    mqtt_slip_conn->type = ESPCONN_TCP;
+		    mqtt_slip_conn->state = ESPCONN_NONE;
+		    mqtt_slip_conn->proto.tcp = mqtt_slip_tcp;
+		    mqtt_slip_tcp->local_port = espconn_port(); // ephemeral
+		    mqtt_slip_tcp->remote_port = MQTT_SLIP_FWD_PORT;
+		    ip_addr_t mqtt_slip_ip;
+		    mqtt_slip_ip.addr = ipaddr_addr(MQTT_SLIP_FWD_HOST);
+		    mqtt_slip_conn->proto.tcp->remote_ip[0] = ((uint8_t*)&mqtt_slip_ip.addr)[0];
+		    mqtt_slip_conn->proto.tcp->remote_ip[1] = ((uint8_t*)&mqtt_slip_ip.addr)[1];
+		    mqtt_slip_conn->proto.tcp->remote_ip[2] = ((uint8_t*)&mqtt_slip_ip.addr)[2];
+		    mqtt_slip_conn->proto.tcp->remote_ip[3] = ((uint8_t*)&mqtt_slip_ip.addr)[3];
+
+		    espconn_regist_connectcb(mqtt_slip_conn, mqtt_slip_http_connected_cb);
+		    espconn_regist_recvcb(mqtt_slip_conn, mqtt_slip_http_recv_cb);
+		    espconn_regist_disconcb(mqtt_slip_conn, mqtt_slip_http_discon_cb);
+
+		    espconn_connect(mqtt_slip_conn);
+		    mqtt_slip_active = true;
+		    return; // the request is handled by the connect_cb, which also frees memory
+	    };
+	    if (mqtt_slip_conn && mqtt_slip_request)
+	    { // We have a connection
+	    	espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
+		os_free(mqtt_slip_request);
+		mqtt_slip_request = NULL;
+	    };
+	    return;
+    };
+#endif    
 
     nTokens = parse_str_into_tokens(cmd_line, tokens, MAX_CMD_TOKENS);
 
@@ -3866,7 +3932,13 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
     case SIG_CONSOLE_TX_RAW:
     {
         struct espconn *pespconn = (struct espconn *)events->par;
-        console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
+#if MQTT_SLIP
+	if (pespconn == 0 &&  mqtt_slip && events->sig == SIG_CONSOLE_TX)
+	{
+		break;
+	};
+#endif
+	        console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
 
         if (pespconn != 0 && remote_console_disconnect)
             espconn_disconnect(pespconn);
