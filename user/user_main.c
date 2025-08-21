@@ -4008,7 +4008,7 @@ void wifi_handle_event_cb(System_Event_t *evt)
     uint16_t i;
     uint8_t mac_str[20];
 
-    os_printf("wifi_handle_event_cb: %d\n\r ", evt->event);
+    //os_printf("wifi_handle_event_cb: %d\n\r ", evt->event);
     switch (evt->event)
     {
     case EVENT_STAMODE_CONNECTED:
