@@ -145,7 +145,7 @@ void ICACHE_FLASH_ATTR mac_2_buff(char *buf, uint8_t mac[6])
 #if MQTT_SLIP
 // SLIP to TCP Forwarder
 #define MQTT_SLIP_FWD_HOST   "127.0.0.1"  // localhost
-#define MQTT_SLIP_FWD_PORT   80 // later 1833
+#define MQTT_SLIP_FWD_PORT   80 // later 1883
 #define MQTT_SLIP_MQTT_SERVER_PORT 1883 // Port of the local MQTT Server
 
 bool mqtt_slip; // If set, the serial is used for ip connection to local mqtt server
@@ -157,6 +157,9 @@ char *mqtt_slip_request = NULL;
 // Callback when TCP connects
 void ICACHE_FLASH_ATTR mqtt_slip_http_connected_cb(void *arg) {
     struct espconn *mqtt_slip_conn = (struct espconn *)arg;
+    system_set_os_print(1);
+    os_printf("mqtt_slip_connect_cb: sending %s\r\n", mqtt_slip_request);
+    system_set_os_print(0);
     espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
     os_free(mqtt_slip_request);
     mqtt_slip_request = NULL;
@@ -909,7 +912,6 @@ void ICACHE_FLASH_ATTR scan_done(void *arg, STATUS status)
 }
 #endif
 
-#if ACLS
 void ICACHE_FLASH_ATTR parse_IP_addr(uint8_t *str, uint32_t *addr, uint32_t *mask)
 {
     int i;
@@ -933,7 +935,7 @@ void ICACHE_FLASH_ATTR parse_IP_addr(uint8_t *str, uint32_t *addr, uint32_t *mas
     *mask = htonl(*mask);
     *addr = ipaddr_addr(str);
 }
-
+#if ACLS
 struct espconn *deny_cb_conn = 0;
 uint8_t acl_debug = 0;
 
@@ -1196,12 +1198,17 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 
     cmd_line[bytes_count] = 0;
     response[0] = 0;
+    os_printf("console_handle_command: %s\r\n",cmd_line);
 
 #if MQTT_SLIP
-    if (mqtt_slip)
+    if (mqtt_slip && pespconn == 0)
     {
-	    char *mqtt_slip_request = (char *)os_malloc(bytes_count); 
+	    char *mqtt_slip_request = (char *)os_malloc(bytes_count+5); 
 	    os_memcpy(mqtt_slip_request,cmd_line,bytes_count);
+	    // Add \r\n\r\n
+	    os_memcpy(&mqtt_slip_request[bytes_count],"\r\n\r\n",4);
+	    bytes_count += 4;
+	    mqtt_slip_request[bytes_count] = 0; // String terminator
 	    if (! mqtt_slip_active) 
 	    {
 	    	    // Use espconn or lwm2m TCP client to send to localhost:80
@@ -1224,11 +1231,18 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 		    espconn_regist_disconcb(mqtt_slip_conn, mqtt_slip_http_discon_cb);
 
 		    espconn_connect(mqtt_slip_conn);
+		    system_set_os_print(1);
+		    os_printf("mqtt_slip Connection active\r\n");
+		    os_printf("mqtt_slip_request: %s\r\n",mqtt_slip_request);
+		    system_set_os_print(0);
 		    mqtt_slip_active = true;
 		    return; // the request is handled by the connect_cb, which also frees memory
 	    };
 	    if (mqtt_slip_conn && mqtt_slip_request)
 	    { // We have a connection
+		system_set_os_print(1);
+	        os_printf("Mqtt_slip: sending %s\r\n",mqtt_slip_request);
+	        system_set_os_print(0);
 	    	espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
 		os_free(mqtt_slip_request);
 		mqtt_slip_request = NULL;
@@ -3935,8 +3949,15 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
 #if MQTT_SLIP
 	if (pespconn == 0 &&  mqtt_slip && events->sig == SIG_CONSOLE_TX)
 	{
+
+		system_set_os_print(1);
+		os_printf("SIG_CONSOLE_TX ignored\r\n");
+		system_set_os_print(0);
 		break;
 	};
+	if (mqtt_slip) system_set_os_print(1);
+	os_printf("SIG_CONSOLE_TX(_RAW)\r\n");
+	if (mqtt_slip) system_set_os_print(0);
 #endif
 	        console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
 
@@ -4704,7 +4725,7 @@ void ICACHE_FLASH_ATTR user_init()
     MQTT_server_cleanupClientCons();
     MQTT_server_start(MQTT_SLIP_MQTT_SERVER_PORT,30,30);
     MQTT_server_cleanupClientCons();
-    os_printf("...done \r\n");
+    os_printf("...done \r\n"); 
 #endif
     remote_console_disconnect = 0;
 

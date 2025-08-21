@@ -51,7 +51,7 @@
 //
 // Define this to 1 to support the "scan" command for AP search
 //
-#define		ALLOW_SCANNING 0
+#define		ALLOW_SCANNING 1
 
 //
 // Define this to 1 to support the "ping" command for IP connectivity check
@@ -95,12 +95,12 @@
 //
 // Define this to 1 if you want to have ACLs for the SoftAP.
 //
-#define		ACLS 1
+#define		ACLS 0
 
 //
 // Define this to 1 if you want to have OTA (Over the air) updates
 //
-#define		OTAUPDATE 0
+#define		OTAUPDATE 1
 
 //
 // Define this to 1 if you want to have QoS for the SoftAP.
@@ -128,7 +128,7 @@
 //
 // Define this to 1 if you want to have it work as a MQTT client
 //
-#define		MQTT_CLIENT 1
+#define		MQTT_CLIENT 0
 
 #define		MQTT_BUF_SIZE 2048
 #define		MQTT_KEEPALIVE 120  /*seconds*/
