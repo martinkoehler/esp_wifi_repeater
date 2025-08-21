@@ -186,7 +186,7 @@ void ICACHE_FLASH_ATTR mqtt_slip_http_discon_cb(void *arg) {
 
 void ICACHE_FLASH_ATTR configure_mqtt_slip(bool flag)
 {
-    os_printf("mqtt_slip: %s", flag?"true":"false");
+    os_printf("mqtt_slip: %s\n\r", flag ? "true":"false");
     if (flag) // mqtt_slip is enabled, suppress all console output
     {
         system_set_os_print(0);
@@ -3815,9 +3815,12 @@ void ICACHE_FLASH_ATTR timer_func(void *arg)
     // Do we still have to configure the AP netif?
     if (do_ip_config)
     {
+	user_set_station_config();
         user_set_softap_ip_config();
         do_ip_config = false;
     }
+
+
 
 #if DAILY_LIMIT
     if (connected && toggle)
@@ -4005,7 +4008,7 @@ void wifi_handle_event_cb(System_Event_t *evt)
     uint16_t i;
     uint8_t mac_str[20];
 
-    //os_printf("wifi_handle_event_cb: ");
+    os_printf("wifi_handle_event_cb: %d\n\r ", evt->event);
     switch (evt->event)
     {
     case EVENT_STAMODE_CONNECTED:
@@ -4050,6 +4053,8 @@ void wifi_handle_event_cb(System_Event_t *evt)
     case EVENT_STAMODE_DISCONNECTED:
         os_printf("disconnect from ssid %s, reason %d\r\n", evt->event_info.disconnected.ssid, evt->event_info.disconnected.reason);
         connected = false;
+	user_set_station_config();
+	wifi_station_connect();
 
 #if MQTT_CLIENT
         if (mqtt_enabled)
@@ -4681,6 +4686,16 @@ void ICACHE_FLASH_ATTR user_init()
     }
 #endif
 
+#if MQTT_SLIP
+	mqtt_slip = config.mqtt_slip;
+        configure_mqtt_slip(mqtt_slip);
+        os_printf("Starting MQTT Server\r\n");
+        MQTT_server_cleanupClientCons();
+        MQTT_server_start(MQTT_SLIP_MQTT_SERVER_PORT,30,30);
+        MQTT_server_cleanupClientCons();
+        os_printf("...done \r\n"); 
+#endif
+
 #if REMOTE_MONITORING
     monitoring_on = 0;
     monitor_port = 0;
@@ -4712,21 +4727,6 @@ void ICACHE_FLASH_ATTR user_init()
         MQTT_OnData(&mqttClient, mqttDataCb);
     }
 #endif /* MQTT_CLIENT */
-#if MQTT_SLIP
-    if (config.mqtt_slip)
-    {
-        mqtt_slip = config.mqtt_slip;
-    } else 
-    {
-        mqtt_slip = false;
-    };
-    configure_mqtt_slip(mqtt_slip);
-    os_printf("Starting MQTT Server\r\n");
-    MQTT_server_cleanupClientCons();
-    MQTT_server_start(MQTT_SLIP_MQTT_SERVER_PORT,30,30);
-    MQTT_server_cleanupClientCons();
-    os_printf("...done \r\n"); 
-#endif
     remote_console_disconnect = 0;
 
     system_init_done_cb(to_scan);
@@ -4758,6 +4758,7 @@ void ICACHE_FLASH_ATTR user_init()
 #endif
 
     system_update_cpu_freq(config.clock_speed);
+
 
 #if DAILY_LIMIT
     sntp_setservername(0, "1.pool.ntp.org");
