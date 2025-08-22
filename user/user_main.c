@@ -159,9 +159,6 @@ char *mqtt_slip_request = NULL;
 // Callback when TCP connects
 void ICACHE_FLASH_ATTR mqtt_slip_http_connected_cb(void *arg) {
     struct espconn *mqtt_slip_conn = (struct espconn *)arg;
-    system_set_os_print(1);
-    os_printf("mqtt_slip_connect_cb: sending %s\r\n", mqtt_slip_request);
-    system_set_os_print(0);
     espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
     os_free(mqtt_slip_request);
     mqtt_slip_request = NULL;
@@ -189,7 +186,7 @@ void ICACHE_FLASH_ATTR mqtt_slip_http_discon_cb(void *arg) {
     mqtt_slip_active = false;
 }
 
-bool ICACHE_FLASH_ATTR mqtt_slip_connect() {
+void ICACHE_FLASH_ATTR mqtt_slip_connect() {
     // establish a connection
     // Use espconn or lwm2m TCP client to send to localhost:80
     mqtt_slip_conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
@@ -211,10 +208,6 @@ bool ICACHE_FLASH_ATTR mqtt_slip_connect() {
     espconn_regist_disconcb(mqtt_slip_conn, mqtt_slip_http_discon_cb);
 
     espconn_connect(mqtt_slip_conn);
-    system_set_os_print(1);
-    os_printf("mqtt_slip Connection active\r\n");
-    system_set_os_print(0);
-    return true;
 };
 
 void ICACHE_FLASH_ATTR configure_mqtt_slip(bool flag)
@@ -1247,16 +1240,10 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
             {
                 mqtt_slip_connect();
                 mqtt_slip_active = true;
-                system_set_os_print(1);
-                os_printf("Mqtt_slip active:\n\r");
-                system_set_os_print(0);
                 return; // the request is handled by the connect_cb, which also frees memory
             };
             if (mqtt_slip_conn && mqtt_slip_request)
             { // We have a connection
-                system_set_os_print(1);
-                os_printf("Mqtt_slip: sending %s\r\n",mqtt_slip_request);
-                system_set_os_print(0);
                 espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
                 os_free(mqtt_slip_request);
                 mqtt_slip_request = NULL;
@@ -3982,17 +3969,8 @@ static void ICACHE_FLASH_ATTR user_procTask(os_event_t *events)
 #if MQTT_SLIP
         if (pespconn == 0 &&  mqtt_slip && events->sig == SIG_CONSOLE_TX)
         {
-
-                //system_set_os_print(1);
-                //os_printf("SIG_CONSOLE_TX ignored\r\n");
-                //system_set_os_print(0);
                 break;
         };
-        if (mqtt_slip) 
-            system_set_os_print(1);
-        //os_printf("SIG_CONSOLE_TX(_RAW)\r\n");
-        if (mqtt_slip) 
-            system_set_os_print(0);
 #endif
         console_send_response(pespconn, events->sig == SIG_CONSOLE_TX);
 
