@@ -170,9 +170,9 @@ void ICACHE_FLASH_ATTR mqtt_slip_http_recv_cb(void *arg, char *pdata, unsigned s
     // Forward HTTP body back to serial
     // Simplest: write raw pdata bytes
     ringbuf_memcpy_into(console_tx_buffer, pdata, len);
-    ringbuf_memcpy_into(console_rx_buffer, "\n", 1);
+    ringbuf_memcpy_into(console_tx_buffer, "\n", 1);
     // signal the main task that command is available for processing
-    system_os_post(0, SIG_CONSOLE_RX, 0);
+    system_os_post(0, SIG_CONSOLE_TX_RAW, 0);
 }
 
 // Callback on disconnection: free memory
