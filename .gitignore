@@ -1,2 +1,3 @@
 build/
 .vscode/
+host/serial_bridge
