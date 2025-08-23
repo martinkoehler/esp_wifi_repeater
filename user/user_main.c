@@ -144,8 +144,7 @@ void ICACHE_FLASH_ATTR mac_2_buff(char *buf, uint8_t mac[6])
 
 #if MQTT_SLIP
 // SLIP to TCP Forwarder
-//#define MQTT_SLIP_FWD_HOST   "127.0.0.1"  // localhost
-#define MQTT_SLIP_FWD_HOST   "192.168.178.1"  // fritz.box
+#define MQTT_SLIP_FWD_HOST   "127.0.0.1"  // localhost
 #define MQTT_SLIP_FWD_PORT   80 // later 1883
 #define MQTT_SLIP_MQTT_SERVER_PORT 1883 // Port of the local MQTT Server
 
@@ -156,39 +155,120 @@ static bool mqtt_slip_active = false;
 char *mqtt_slip_request = NULL;
 
 
+static char pending_line[80];
+static int pending_len = 0;
+
+static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static int ICACHE_FLASH_ATTR base64_encode(const uint8_t *in, size_t inlen, char *out) {
+    size_t i, j;
+    for (i = 0, j = 0; i < inlen;) {
+        uint32_t octet_a = i < inlen ? in[i++] : 0;
+        uint32_t octet_b = i < inlen ? in[i++] : 0;
+        uint32_t octet_c = i < inlen ? in[i++] : 0;
+
+        uint32_t triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+
+        out[j++] = b64_table[(triple >> 18) & 0x3F];
+        out[j++] = b64_table[(triple >> 12) & 0x3F];
+        out[j++] = (i > inlen + 1) ? '=' : b64_table[(triple >> 6) & 0x3F];
+        out[j++] = (i > inlen) ? '=' : b64_table[triple & 0x3F];
+    }
+    out[j] = '\0';
+    return j;
+}
+
+static int ICACHE_FLASH_ATTR b64_index(char c) {
+    if ('A' <= c && c <= 'Z') return c - 'A';
+    if ('a' <= c && c <= 'z') return c - 'a' + 26;
+    if ('0' <= c && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static int ICACHE_FLASH_ATTR base64_decode(const char *in, uint8_t *out) {
+    int len = os_strlen(in);
+    int i, j;
+    uint32_t accum = 0;
+    int bits = 0;
+    for (i = 0, j = 0; i < len; i++) {
+        if (in[i] == '=') break;
+        int v = b64_index(in[i]);
+        if (v < 0) continue;
+        accum = (accum << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out[j++] = (accum >> bits) & 0xFF;
+        }
+    }
+    return j;
+}
+
+static void ICACHE_FLASH_ATTR flush_console_tx() {
+    if (pending_len > 0) {
+	os_printf("Flushing console\r\n");
+        pending_line[pending_len++] = '\r';
+        pending_line[pending_len] = '\0';
+        ringbuf_memcpy_into(console_tx_buffer, pending_line, os_strlen(pending_line));
+        system_os_post(0, SIG_CONSOLE_TX_RAW, 0);
+        pending_len = 0;
+    }
+}
+
+
+
+
 // Callback when TCP connects
-void ICACHE_FLASH_ATTR mqtt_slip_http_connected_cb(void *arg) {
+void ICACHE_FLASH_ATTR mqtt_slip_connected_cb(void *arg) {
     struct espconn *mqtt_slip_conn = (struct espconn *)arg;
-    espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
-    os_free(mqtt_slip_request);
-    mqtt_slip_request = NULL;
+    char cmd_line[MAX_CON_CMD_SIZE + 1];
+    int bytes_count = ringbuf_bytes_used(console_rx_buffer);
+    ringbuf_memcpy_from(cmd_line, console_rx_buffer, bytes_count);
+    cmd_line[bytes_count] = 0;
+    uint8_t buf[256];
+    int n = base64_decode(cmd_line, buf);
+    buf[n+1]=0;
+    os_printf("mqtt_slip_connected_cb: %s (orig)\r\n",cmd_line);
+    espconn_sent(mqtt_slip_conn, buf, n);
+    os_printf("buf sent\r\n");
 }
 
 // Callback on HTTP response
-void ICACHE_FLASH_ATTR mqtt_slip_http_recv_cb(void *arg, char *pdata, unsigned short len) {
-    // Forward HTTP body back to serial
-    // Simplest: write raw pdata bytes
-    UART_Send(0, pdata, len);
-    return;
-    // Better do it like this ?!
-    ringbuf_memcpy_into(console_tx_buffer, pdata, len);
-    ringbuf_memcpy_into(console_tx_buffer, "\n", 1);
-    // signal the main task that command is available for processing
-    system_os_post(0, SIG_CONSOLE_TX_RAW, 0);
+void ICACHE_FLASH_ATTR mqtt_slip_recv_cb(void *arg, char *pdata, unsigned short len) {
+    char b64_buf[512];
+    int enc_len = base64_encode((uint8_t*)pdata, len, b64_buf);
+    os_printf("Rec: %s (%d)\r\n",pdata,enc_len);
+    int i;
+    for (i = 0; i < enc_len; i++) {
+        pending_line[pending_len++] = b64_buf[i];
+        if (pending_len == 76) {
+            flush_console_tx();
+        }
+    };
 }
 
 // Callback on disconnection: free memory
-void ICACHE_FLASH_ATTR mqtt_slip_http_discon_cb(void *arg) {
+void ICACHE_FLASH_ATTR mqtt_slip_discon_cb(void *arg) {
     struct espconn *mqtt_slip_conn = (struct espconn *)arg;
+    os_printf("Disconnected\r\n");
     os_free(mqtt_slip_conn->proto.tcp);
     os_free(mqtt_slip_conn);
     mqtt_slip_conn = NULL;
     mqtt_slip_active = false;
+    flush_console_tx();
+    char ctrlD = 0x04;
+    ringbuf_memcpy_into(console_tx_buffer, &ctrlD, 1);
+    system_os_post(0, SIG_CONSOLE_TX_RAW, 0);
+}
+
+void ICACHE_FLASH_ATTR mqtt_slip_reconnect_cb(void *arg, sint8 err) {
+    os_printf("Reconnect callback, error: %d\n", err);
 }
 
 void ICACHE_FLASH_ATTR mqtt_slip_connect() {
     // establish a connection
-    // Use espconn or lwm2m TCP client to send to localhost:80
     mqtt_slip_conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
     mqtt_slip_tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
     mqtt_slip_conn->type = ESPCONN_TCP;
@@ -203,11 +283,18 @@ void ICACHE_FLASH_ATTR mqtt_slip_connect() {
     mqtt_slip_conn->proto.tcp->remote_ip[2] = ((uint8_t*)&mqtt_slip_ip.addr)[2];
     mqtt_slip_conn->proto.tcp->remote_ip[3] = ((uint8_t*)&mqtt_slip_ip.addr)[3];
 
-    espconn_regist_connectcb(mqtt_slip_conn, mqtt_slip_http_connected_cb);
-    espconn_regist_recvcb(mqtt_slip_conn, mqtt_slip_http_recv_cb);
-    espconn_regist_disconcb(mqtt_slip_conn, mqtt_slip_http_discon_cb);
+    espconn_regist_connectcb(mqtt_slip_conn, mqtt_slip_connected_cb);
+    espconn_regist_recvcb(mqtt_slip_conn, mqtt_slip_recv_cb);
+    espconn_regist_reconcb(mqtt_slip_conn, mqtt_slip_reconnect_cb);
+    espconn_regist_disconcb(mqtt_slip_conn, mqtt_slip_discon_cb);
 
-    espconn_connect(mqtt_slip_conn);
+    err_t res = espconn_connect(mqtt_slip_conn);
+    os_printf("Connected: %d\r\n",res);
+    char cmd_line[MAX_CON_CMD_SIZE + 1];
+    int bytes_count = ringbuf_bytes_used(console_rx_buffer);
+    ringbuf_memcpy_from(cmd_line, console_rx_buffer, bytes_count);
+    cmd_line[bytes_count] = 0;
+    os_printf("cmd_line: %s\r\n",cmd_line);
 };
 
 void ICACHE_FLASH_ATTR configure_mqtt_slip(bool flag)
@@ -1229,26 +1316,18 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
 #if MQTT_SLIP
     if (mqtt_slip && pespconn == 0)
     {
-            mqtt_slip_request = (char *)os_malloc(bytes_count+5); 
-            //mqtt_slip_request = (char *)os_malloc(bytes_count); 
-            os_memcpy(mqtt_slip_request,cmd_line,bytes_count);
-            // Add \r\n\r\n
-            os_memcpy(&mqtt_slip_request[bytes_count],"\r\n\r\n",4);
-            bytes_count += 4;
-            mqtt_slip_request[bytes_count] = 0; // String terminator
             if (! mqtt_slip_active) 
             {
                 mqtt_slip_connect();
                 mqtt_slip_active = true;
                 return; // the request is handled by the connect_cb, which also frees memory
             };
-            if (mqtt_slip_conn && mqtt_slip_request)
-            { // We have a connection
-                espconn_send(mqtt_slip_conn, (uint8_t*)mqtt_slip_request, os_strlen(mqtt_slip_request));
-                os_free(mqtt_slip_request);
-                mqtt_slip_request = NULL;
-            };
-            return;
+            uint8_t buf[256];
+            int n = base64_decode(cmd_line, buf);
+            if (mqtt_slip_active && n > 0) {
+	         espconn_sent(mqtt_slip_conn, buf, n);
+	     };
+             return;
     };
 #endif    
 
@@ -2742,18 +2821,14 @@ void ICACHE_FLASH_ATTR console_handle_command(struct espconn *pespconn)
             {
               if (strcmp(tokens[2], "test") == 0 )
               {
-                      char req[128] = "GET / HTTP/1.0\n\r\n\r";
+                      char req[128] = "R0VUIC8gSFRUUC8xLjAKCg=="; // "GET / HTTP/1.0\r\n\r\n"
                       int l = os_strlen(req);
-                      req[l] = 0;
-                      mqtt_slip_request = (char *)os_malloc(l); 
-                      os_memcpy(mqtt_slip_request,req,l);
-                      mqtt_slip_request[l] = 0; // String terminator
-                      //os_printf("os_printf mqtt_slip_request: %s\n\r",mqtt_slip_request);
-                      //UART_Send(0, mqtt_slip_request, os_strlen(mqtt_slip_request));
-                      //os_printf("os_printf after UART mqtt_slip_request: %s\n\r",mqtt_slip_request);
+		      ringbuf_memcpy_into(console_rx_buffer,req,l);
+		      os_printf("req: %s\r\n",req);
                       mqtt_slip_connect();
+
                       //espconn_send(pespconn, (uint8_t *) mqtt_slip_request, os_strlen(mqtt_slip_request));
-                      //os_sprintf_flash(response,"... mqtt_slip test processed\n\r");
+                      os_sprintf_flash(response,"... mqtt_slip test processed\n\r");
                       goto command_handled;
               }
               if (strcmp(tokens[2], "true") == 0 )
